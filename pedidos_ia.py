@@ -1,6 +1,5 @@
 import io
 import os
-from datetime import datetime
 from github import Github
 import openpyxl
 import pandas as pd
@@ -13,28 +12,36 @@ st.set_page_config(
 # ----------------------------------------------------
 # 1. CONFIGURACIÓN DE GITHUB
 # ----------------------------------------------------
-# Recuerda configurar tu token en los Secrets de Streamlit o en .streamlit/secrets.toml
 GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
 
-# REEMPLAZA ESTO con tu usuario y nombre del repositorio (ej. "usuario/mi-repo")
+# REEMPLAZA ESTO con tu usuario y repositorio (ej. "usuario/mi-repo")
 REPO_NAME = "JeremyMtz02/pedidos_zapatos"
 
-# Nombre del archivo Excel que se guardará en GitHub
-FILE_PATH = "PEDIDOS_PRUEBA.xlsx"
+# Rutas de los archivos en el repositorio
+FILE_PATH_EXCEL = "PEDIDOS_PRUEBA.xlsx"
+FILE_PATH_CLIENTES = "clientes_lista.txt"
+
+CLIENTES_INICIALES = [
+    "Jimena Lopez",
+    "Mary Hernandez",
+    "Rita Martinez",
+    "Consuelo Chavez",
+    "Hortencia Flores",
+]
 
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
 
-
+# ----------------------------------------------------
+# FUNCIONES PARA EXCEL EN GITHUB
+# ----------------------------------------------------
 def cargar_datos_github():
     try:
-        content = repo.get_contents(FILE_PATH)
+        content = repo.get_contents(FILE_PATH_EXCEL)
         data = content.decoded_content
-        # Leemos el archivo excel desde los bytes de GitHub
         df = pd.read_excel(io.BytesIO(data))
         return df, content.sha
     except Exception:
-        # Si el archivo aún no existe en el repositorio, creamos un DataFrame base
         df_nuevo = pd.DataFrame(
             columns=[
                 "Pagina",
@@ -55,40 +62,48 @@ def guardar_datos_github(df, sha_actual, mensaje_commit):
     content_bytes = output.getvalue()
 
     if sha_actual:
-        # Actualiza el archivo si ya existe
-        repo.update_file(FILE_PATH, mensaje_commit, content_bytes, sha_actual)
+        repo.update_file(FILE_PATH_EXCEL, mensaje_commit, content_bytes, sha_actual)
     else:
-        # Crea el archivo por primera vez
-        repo.create_file(FILE_PATH, mensaje_commit, content_bytes)
+        repo.create_file(FILE_PATH_EXCEL, mensaje_commit, content_bytes)
 
 
 # ----------------------------------------------------
-# 2. MANEJO DE CLIENTES LOCALES
+# FUNCIONES PARA CLIENTES EN GITHUB (PERMANENTE)
 # ----------------------------------------------------
-ARCHIVO_CLIENTES = "clientes_lista.txt"
-CLIENTES_INICIALES = [
-    "Jimena Lopez",
-    "Mary Hernandez",
-    "Rita Martinez",
-    "Consuelo Chavez",
-    "Hortencia Flores",
-]
+def cargar_clientes_github():
+    try:
+        content = repo.get_contents(FILE_PATH_CLIENTES)
+        texto = content.decoded_content.decode("utf-8")
+        clientes = [line.strip() for line in texto.splitlines() if line.strip()]
+        return clientes if clientes else CLIENTES_INICIALES, content.sha
+    except Exception:
+        return CLIENTES_INICIALES, None
 
 
-def cargar_clientes():
-    if os.path.exists(ARCHIVO_CLIENTES):
-        with open(ARCHIVO_CLIENTES, "r", encoding="utf-8") as f:
-            clientes = [line.strip() for line in f.readlines() if line.strip()]
-            return clientes if clientes else CLIENTES_INICIALES
+def guardar_cliente_github(lista_clientes, sha_actual, nuevo_nombre):
+    contenido_texto = "\n".join(lista_clientes) + "\n"
+    mensaje_commit = f"Nuevo cliente agregado: {nuevo_nombre}"
+    
+    if sha_actual:
+        repo.update_file(
+            FILE_PATH_CLIENTES,
+            mensaje_commit,
+            contenido_texto,
+            sha_actual
+        )
     else:
-        with open(ARCHIVO_CLIENTES, "w", encoding="utf-8") as f:
-            for c in CLIENTES_INICIALES:
-                f.write(f"{c}\n")
-        return CLIENTES_INICIALES
+        repo.create_file(
+            FILE_PATH_CLIENTES,
+            mensaje_commit,
+            contenido_texto
+        )
 
 
+# Cargar clientes desde GitHub al iniciar
 if "clientes_lista" not in st.session_state:
-    st.session_state["clientes_lista"] = cargar_clientes()
+    clientes, sha_clientes = cargar_clientes_github()
+    st.session_state["clientes_lista"] = clientes
+    st.session_state["sha_clientes"] = sha_clientes
 
 lista_pagina = [x for x in range(1, 10)]
 zapatos_dicc = {
@@ -106,11 +121,11 @@ zapatos_dicc = {
 
 st.title("👠 Pedidos de Zapatos Minga Inc")
 
-# Cargar los datos actuales desde GitHub al iniciar la app
+# Cargar los datos actuales de pedidos desde GitHub
 df_actual, sha_archivo = cargar_datos_github()
 
 # ----------------------------------------------------
-# 3. CAPTURA DEL PEDIDO
+# 2. CAPTURA DEL PEDIDO Y CLIENTES
 # ----------------------------------------------------
 col1, col2 = st.columns(2)
 
@@ -134,9 +149,16 @@ with col1:
                 and nombre_limpio not in st.session_state["clientes_lista"]
             ):
                 st.session_state["clientes_lista"].append(nombre_limpio)
-                with open(ARCHIVO_CLIENTES, "a", encoding="utf-8") as f:
-                    f.write(f"{nombre_limpio}\n")
-                st.success(f"Cliente '{nombre_limpio}' guardado.")
+                
+                # Actualizar archivo en GitHub de forma permanente
+                with st.spinner("Guardando nuevo cliente en GitHub..."):
+                    guardar_cliente_github(
+                        st.session_state["clientes_lista"],
+                        st.session_state["sha_clientes"],
+                        nombre_limpio
+                    )
+                
+                st.success(f"Cliente '{nombre_limpio}' guardado permanentemente en GitHub.")
                 st.rerun()
             else:
                 st.warning("Nombre no válido o ya existente.")
@@ -164,7 +186,7 @@ with col2:
 st.divider()
 
 # ----------------------------------------------------
-# 4. BOTÓN PARA GUARDAR NUEVO PEDIDO
+# 3. BOTÓN PARA GUARDAR NUEVO PEDIDO
 # ----------------------------------------------------
 if st.button("💾 Guardar Pedido", use_container_width=True):
     if not cliente_final or cliente_final == opcion_nuevo:
@@ -172,7 +194,6 @@ if st.button("💾 Guardar Pedido", use_container_width=True):
     elif monto_total <= 0:
         st.error("❌ El monto total debe ser mayor a 0.")
     else:
-        # Crear la nueva fila
         nueva_fila = pd.DataFrame(
             [
                 {
@@ -186,10 +207,8 @@ if st.button("💾 Guardar Pedido", use_container_width=True):
             ]
         )
 
-        # Concatenar a nuestro DataFrame
         df_actual = pd.concat([df_actual, nueva_fila], ignore_index=True)
 
-        # Guardar automáticamente en el repositorio de GitHub
         with st.spinner("Guardando pedido en GitHub..."):
             guardar_datos_github(
                 df_actual,
@@ -203,7 +222,7 @@ if st.button("💾 Guardar Pedido", use_container_width=True):
 st.divider()
 
 # ----------------------------------------------------
-# 5. MÓDULO PARA ACTUALIZAR ABONOS EN GITHUB
+# 4. MÓDULO PARA ACTUALIZAR ABONOS EN GITHUB
 # ----------------------------------------------------
 if not df_actual.empty:
     with st.expander("💳 Registrar un nuevo abono a un pedido existente"):
@@ -231,11 +250,9 @@ if not df_actual.empty:
             )
 
             if st.button("➕ Aplicar Abono"):
-                # Actualizar montos en el DataFrame
                 df_actual.loc[fila_idx, "Abonado"] += nuevo_abono
                 df_actual.loc[fila_idx, "Restante"] -= nuevo_abono
 
-                # Guardar cambios en GitHub
                 with st.spinner("Actualizando abono en GitHub..."):
                     guardar_datos_github(
                         df_actual,
@@ -248,6 +265,5 @@ if not df_actual.empty:
                 )
                 st.rerun()
 
-    # Mostrar la tabla actualizada
     st.subheader("📋 Registros almacenados en GitHub:")
     st.dataframe(df_actual, use_container_width=True)
