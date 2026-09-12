@@ -1,7 +1,8 @@
+import io
 import os
 from datetime import datetime
+from github import Github
 import openpyxl
-from openpyxl import load_workbook
 import pandas as pd
 import streamlit as st
 
@@ -10,7 +11,59 @@ st.set_page_config(
 )
 
 # ----------------------------------------------------
-# 1. ARCHIVOS Y CONFIGURACIÓN INICIAL
+# 1. CONFIGURACIÓN DE GITHUB
+# ----------------------------------------------------
+# Recuerda configurar tu token en los Secrets de Streamlit o en .streamlit/secrets.toml
+GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
+
+# REEMPLAZA ESTO con tu usuario y nombre del repositorio (ej. "usuario/mi-repo")
+REPO_NAME = "JeremyMtz02/pedidos_zapatos"
+
+# Nombre del archivo Excel que se guardará en GitHub
+FILE_PATH = "PEDIDOS_PRUEBA.xlsx"
+
+g = Github(GITHUB_TOKEN)
+repo = g.get_repo(REPO_NAME)
+
+
+def cargar_datos_github():
+    try:
+        content = repo.get_contents(FILE_PATH)
+        data = content.decoded_content
+        # Leemos el archivo excel desde los bytes de GitHub
+        df = pd.read_excel(io.BytesIO(data))
+        return df, content.sha
+    except Exception:
+        # Si el archivo aún no existe en el repositorio, creamos un DataFrame base
+        df_nuevo = pd.DataFrame(
+            columns=[
+                "Pagina",
+                "Zapato",
+                "Cliente",
+                "Total",
+                "Abonado",
+                "Restante",
+            ]
+        )
+        return df_nuevo, None
+
+
+def guardar_datos_github(df, sha_actual, mensaje_commit):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+    content_bytes = output.getvalue()
+
+    if sha_actual:
+        # Actualiza el archivo si ya existe
+        repo.update_file(FILE_PATH, mensaje_commit, content_bytes, sha_actual)
+    else:
+        # Crea el archivo por primera vez
+        repo.create_file(FILE_PATH, mensaje_commit, content_bytes)
+
+
+# ----------------------------------------------------
+# 2. MANEJO DE CLIENTES LOCALES
 # ----------------------------------------------------
 ARCHIVO_CLIENTES = "clientes_lista.txt"
 CLIENTES_INICIALES = [
@@ -37,20 +90,27 @@ def cargar_clientes():
 if "clientes_lista" not in st.session_state:
     st.session_state["clientes_lista"] = cargar_clientes()
 
-lista_pagina = [x for x in range(1, 50)]
-zapatos_dicc = {1: ["A1", "A2", "A3"], 2: ["B1", "B2", "B3"]}
-
-dia, mes, anio = (
-    ("0" + str(datetime.now().day))[-2:],
-    ("0" + str(datetime.now().month))[-2:],
-    str(datetime.now().year),
-)
-archivo_nombre = f"PEDIDOS_PRUEBA_{dia}{mes}{anio}.xlsx"
+lista_pagina = [x for x in range(1, 10)]
+zapatos_dicc = {
+    1: ["A1", "A2", "A3"],
+    2: ["B1", "B2", "B3"],
+    3: ["C1", "C2", "C3"],
+    4: ["D1", "D2", "D3"],
+    5: ["E1", "E2", "E3"],
+    6: ["F1", "F2", "F3"],
+    7: ["G1", "G2", "G3"],
+    8: ["H1", "H2", "H3"],
+    9: ["I1", "I2", "I3"],
+    10: ["J1", "J2", "J3"],
+}
 
 st.title("👠 Pedidos de Zapatos Minga Inc")
 
+# Cargar los datos actuales desde GitHub al iniciar la app
+df_actual, sha_archivo = cargar_datos_github()
+
 # ----------------------------------------------------
-# 2. CAPTURA DEL PEDIDO
+# 3. CAPTURA DEL PEDIDO
 # ----------------------------------------------------
 col1, col2 = st.columns(2)
 
@@ -69,7 +129,10 @@ with col1:
         nuevo_nombre = st.text_input("Escriba el nombre del nuevo cliente:")
         if st.button("Guardar cliente"):
             nombre_limpio = nuevo_nombre.strip()
-            if nombre_limpio and nombre_limpio not in st.session_state["clientes_lista"]:
+            if (
+                nombre_limpio
+                and nombre_limpio not in st.session_state["clientes_lista"]
+            ):
                 st.session_state["clientes_lista"].append(nombre_limpio)
                 with open(ARCHIVO_CLIENTES, "a", encoding="utf-8") as f:
                     f.write(f"{nombre_limpio}\n")
@@ -80,7 +143,6 @@ with col1:
         cliente_final = None
 
 with col2:
-    # NUEVOS CAMPOS: Total y Abonado
     monto_total = st.number_input(
         "Monto Total ($):", min_value=0.0, step=50.0, value=0.0
     )
@@ -102,7 +164,7 @@ with col2:
 st.divider()
 
 # ----------------------------------------------------
-# 3. BOTÓN PARA GUARDAR NUEVO PEDIDO
+# 4. BOTÓN PARA GUARDAR NUEVO PEDIDO
 # ----------------------------------------------------
 if st.button("💾 Guardar Pedido", use_container_width=True):
     if not cliente_final or cliente_final == opcion_nuevo:
@@ -110,86 +172,82 @@ if st.button("💾 Guardar Pedido", use_container_width=True):
     elif monto_total <= 0:
         st.error("❌ El monto total debe ser mayor a 0.")
     else:
-        # Crear archivo con las nuevas columnas si no existe
-        if not os.path.exists(archivo_nombre):
-            df_inicial = pd.DataFrame(
-                columns=[
-                    "Pagina",
-                    "Zapato",
-                    "Cliente",
-                    "Total",
-                    "Abonado",
-                    "Restante",
-                ]
-            )
-            df_inicial.to_excel(archivo_nombre, index=False)
-
-        # Guardar la fila en Excel
-        wb = load_workbook(archivo_nombre)
-        ws = wb.active
-        ws.append(
+        # Crear la nueva fila
+        nueva_fila = pd.DataFrame(
             [
-                sel_pag,
-                sel_zapato,
-                cliente_final,
-                monto_total,
-                monto_abonado,
-                monto_restante,
+                {
+                    "Pagina": sel_pag,
+                    "Zapato": sel_zapato,
+                    "Cliente": cliente_final,
+                    "Total": monto_total,
+                    "Abonado": monto_abonado,
+                    "Restante": monto_restante,
+                }
             ]
         )
-        wb.save(archivo_nombre)
-        wb.close()
 
-        st.success(f"✅ Pedido guardado para **{cliente_final}**")
+        # Concatenar a nuestro DataFrame
+        df_actual = pd.concat([df_actual, nueva_fila], ignore_index=True)
+
+        # Guardar automáticamente en el repositorio de GitHub
+        with st.spinner("Guardando pedido en GitHub..."):
+            guardar_datos_github(
+                df_actual,
+                sha_archivo,
+                f"Nuevo pedido guardado: {cliente_final}",
+            )
+
+        st.success(f"✅ Pedido guardado en la nube para **{cliente_final}**")
         st.rerun()
 
 st.divider()
 
 # ----------------------------------------------------
-# 4. MÓDULO PARA ACTUALIZAR ABONOS DE PEDIDOS EXISTENTES
+# 5. MÓDULO PARA ACTUALIZAR ABONOS EN GITHUB
 # ----------------------------------------------------
-if os.path.exists(archivo_nombre):
-    df_actual = pd.read_excel(archivo_nombre)
-
+if not df_actual.empty:
     with st.expander("💳 Registrar un nuevo abono a un pedido existente"):
-        if not df_actual.empty:
-            # Creamos una lista identificando cada fila por su índice en Excel
-            opciones_pedidos = [
-                f"Fila {idx + 2}: {row['Cliente']} - Pag {row['Pagina']} ({row['Zapato']}) | Deuda: ${row['Restante']}"
-                for idx, row in df_actual.iterrows()
-            ]
+        opciones_pedidos = [
+            f"Fila {idx + 2}: {row['Cliente']} - Pag {row['Pagina']} ({row['Zapato']}) | Deuda: ${row['Restante']}"
+            for idx, row in df_actual.iterrows()
+        ]
 
-            pedido_seleccionado = st.selectbox(
-                "Selecciona el pedido al que abonar:", opciones_pedidos
+        pedido_seleccionado = st.selectbox(
+            "Selecciona el pedido al que abonar:", opciones_pedidos
+        )
+
+        fila_idx = opciones_pedidos.index(pedido_seleccionado)
+        restante_actual = float(df_actual.loc[fila_idx, "Restante"])
+
+        if restante_actual <= 0:
+            st.success("🎉 ¡Este pedido ya está completamente pagado!")
+        else:
+            nuevo_abono = st.number_input(
+                "Monto del nuevo abono ($):",
+                min_value=0.01,
+                max_value=restante_actual,
+                step=50.0,
+                value=min(50.0, restante_actual),
             )
 
-            # Obtener el número de fila seleccionado
-            fila_idx = opciones_pedidos.index(pedido_seleccionado)
-            restante_actual = float(df_actual.loc[fila_idx, "Restante"])
+            if st.button("➕ Aplicar Abono"):
+                # Actualizar montos en el DataFrame
+                df_actual.loc[fila_idx, "Abonado"] += nuevo_abono
+                df_actual.loc[fila_idx, "Restante"] -= nuevo_abono
 
-            if restante_actual <= 0:
-                st.success("🎉 ¡Este pedido ya está completamente pagado!")
-            else:
-                nuevo_abono = st.number_input(
-                    "Monto del nuevo abono ($):",
-                    min_value=0.01,
-                    max_value=restante_actual,
-                    step=50.0,
-                    value=min(50.0, restante_actual),
-                )
-
-                if st.button("➕ Aplicar Abono"):
-                    # Actualizamos los valores en el DataFrame
-                    df_actual.loc[fila_idx, "Abonado"] += nuevo_abono
-                    df_actual.loc[fila_idx, "Restante"] -= nuevo_abono
-
-                    # Guardamos el Excel actualizado
-                    df_actual.to_excel(archivo_nombre, index=False)
-                    st.success(
-                        f"✅ Se abonaron ${nuevo_abono} al pedido de {df_actual.loc[fila_idx, 'Cliente']}."
+                # Guardar cambios en GitHub
+                with st.spinner("Actualizando abono en GitHub..."):
+                    guardar_datos_github(
+                        df_actual,
+                        sha_archivo,
+                        f"Abono de ${nuevo_abono} a {df_actual.loc[fila_idx, 'Cliente']}",
                     )
-                    st.rerun()
 
-    # Mostrar la tabla actualizada de Excel
-    st.subheader("📋 Registros de hoy:")
+                st.success(
+                    f"✅ Se abonaron ${nuevo_abono} al pedido de {df_actual.loc[fila_idx, 'Cliente']}."
+                )
+                st.rerun()
+
+    # Mostrar la tabla actualizada
+    st.subheader("📋 Registros almacenados en GitHub:")
     st.dataframe(df_actual, use_container_width=True)
