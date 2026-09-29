@@ -42,10 +42,13 @@ def cargar_datos_github():
         df = pd.read_excel(io.BytesIO(data))
         return df, content.sha
     except Exception:
+        # SE AGREGARON LAS COLUMNAS DE TALLA Y DISPONIBILIDAD AQUÍ
         df_nuevo = pd.DataFrame(
             columns=[
                 "Pagina",
                 "Zapato",
+                "Talla",
+                "Disponibilidad",
                 "Cliente",
                 "Total",
                 "Abonado",
@@ -119,7 +122,11 @@ zapatos_dicc = {
     10: ["J1", "J2", "J3"],
 }
 
-st.title("👠 Pedidos de Zapatos Minga Inc")
+# NUEVAS LISTAS PARA TALLA Y DISPONIBILIDAD
+lista_tallas = [22.0, 22.5, 23.0, 23.5, 24.0, 24.5, 25.0, 25.5, 26.0, 26.5, 27.0]
+lista_disponibilidad = ["Sí", "No"]
+
+st.title("👠 Pedidos de ZAPATOS RITA")
 
 # Cargar los datos actuales de pedidos desde GitHub
 df_actual, sha_archivo = cargar_datos_github()
@@ -133,6 +140,10 @@ with col1:
     sel_pag = st.selectbox("Seleccione una página de la lista:", lista_pagina)
     zapatos_opciones = zapatos_dicc.get(sel_pag, ["A1", "A2", "A3"])
     sel_zapato = st.selectbox("Seleccione el par a elegir:", zapatos_opciones)
+    
+    # NUEVOS CAMPOS DE SELECCIÓN
+    sel_talla = st.selectbox("Seleccione la talla:", lista_tallas)
+    sel_disponibilidad = st.selectbox("¿Está disponible?", lista_disponibilidad)
 
     # Selección de Cliente
     opcion_nuevo = "➕ Agregar nuevo cliente..."
@@ -199,6 +210,8 @@ if st.button("💾 Guardar Pedido", use_container_width=True):
                 {
                     "Pagina": sel_pag,
                     "Zapato": sel_zapato,
+                    "Talla": sel_talla,               # SE AÑADIÓ TALLA AL GUARDAR
+                    "Disponibilidad": sel_disponibilidad, # SE AÑADIÓ DISPONIBILIDAD AL GUARDAR
                     "Cliente": cliente_final,
                     "Total": monto_total,
                     "Abonado": monto_abonado,
@@ -226,8 +239,9 @@ st.divider()
 # ----------------------------------------------------
 if not df_actual.empty:
     with st.expander("💳 Registrar un nuevo abono a un pedido existente"):
+        # Se modificó un poco la vista de opciones para mostrar también la talla.
         opciones_pedidos = [
-            f"Fila {idx + 2}: {row['Cliente']} - Pag {row['Pagina']} ({row['Zapato']}) | Deuda: ${row['Restante']}"
+            f"Fila {idx + 2}: {row['Cliente']} - Pag {row['Pagina']} ({row['Zapato']} - Talla {row.get('Talla', 'N/A')}) | Deuda: ${row['Restante']}"
             for idx, row in df_actual.iterrows()
         ]
 
